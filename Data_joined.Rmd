@@ -1,0 +1,200 @@
+---
+title: "EDA of Kaggle dataset"
+output: html_notebook
+---
+
+```{r, include=FALSE}
+library(knitr)
+library(tidyverse)
+library(magrittr)
+library(scales)
+library(tidytext)
+```
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+#options(scipen=999) #Prevents e+/e- notation in tweetids
+```
+
+```{r}
+data_43k <- read_csv("https://raw.githubusercontent.com/sv1l/SDS/main/twitter_sentiment_data.csv",show_col_types = FALSE)
+
+data_43k %>% glimpse()
+```
+It is common for Twitter users to retweet content that other users have posted. This means that texts will appear more than once which we don't want when training our model. We'll thus extract the retweets and examine how large a share they make up of the dataset as a whole.
+```{r}
+retweets_43k <- data_43k %>% filter(message %>% str_detect("^RT")) %>% count()
+
+share_of_retweets_43k <- (retweets_43k$n)/(data_43k %>% count())
+
+share_of_retweets_43k %>% rename(share_of_retweets = n) %>% mutate(share_of_retweets = paste0(round(share_of_retweets*100,2), "%")) %>% as_tibble()
+```
+
+We'll filter out the retweets. 
+```{r}
+data_43k %<>% 
+  filter(!(message %>% str_detect("^RT")))
+```
+
+Duplicates could still be present.
+```{r}
+data_43k %>% group_by(tweetid) %>% count(sort=TRUE)
+```
+We see that we have unique **tweetids**. For simplicity we'll rename the **tweetids** corresponding to the rownumbers.
+
+```{r}
+data_43k %<>% mutate(tweetid = row_number())
+```
+
+But what about the actual texts? Let's also check for identical tweet contents. 
+```{r}
+data_43k %>% group_by(message) %>% count(sort=TRUE)
+```
+We see that there are a few texts that occur more than once but with different **tweetids**. We'll filter out these identical tweets as well keeping only one occurence pr. tweet text.
+
+```{r}
+data_43k %<>% distinct(message, .keep_all=TRUE)
+```
+
+We'll do the same for the **75k** dataset.
+
+```{r}
+data_75k <- read_csv("https://raw.githubusercontent.com/sv1l/SDS/main/climate_training_data_Ensemble.csv",show_col_types = FALSE)
+data_75k %<>% select(Consensus,message,tweetid) %>% rename(sentiment=Consensus) 
+```
+First, we'll examine and filter out retweets.
+```{r}
+retweets_75k <- data_75k %>% filter(message %>% str_detect("^RT")) %>% count()
+
+share_of_retweets_75k <- (retweets_75k$n)/(data_75k %>% count())
+
+share_of_retweets_75k %>% rename(share_of_retweets = n) %>% mutate(share_of_retweets = paste0(round(share_of_retweets*100,2), "%")) %>% as_tibble()
+```
+
+We'll filter out the retweets. 
+```{r}
+data_75k %<>% 
+  filter(!(message %>% str_detect("^RT")))
+```
+
+Checking for duplicate rows in the **data_75k** dataset.
+```{r}
+data_75k %>% group_by(tweetid) %>% count(sort=TRUE)
+```
+Here we see that **tweetids** occur more than once in our data. Let's look into this. 
+```{r}
+data_75k %>% filter(tweetid == 704169000000000000)
+```
+It is apparent from the print above that the **tweetids** are identical but that the **message** is different. Let's just check for identical messages before deciding what to do with the identical **tweetids**.
+
+```{r}
+data_75k %>% group_by(message) %>% count(sort=TRUE)
+```
+We do see that some **messages** occur more than once. We'll filter out these duplicates and look at identical **tweetids** once more.
+```{r}
+data_75k %<>% distinct(message, .keep_all=TRUE)
+
+data_75k %>% group_by(tweetid) %>% count(sort=TRUE)
+```
+Now that we know that no tweets are identical with respect to their content or **message** we'll define a new range for the **tweetids** in order to make them distinct. Again, we'll use the row_numbers as range.
+
+```{r}
+data_75k %<>% mutate(tweetid = row_number())
+```
+
+We'll join the two dataframes and now we'll of course have duplicate **tweetids**. Therefore, we'll once again redefine the range ofthe **tweetids** and then look for duplicates based on the **message** variable.
+```{r}
+data_joined <- rbind(data_43k,data_75k)
+
+data_joined %<>% mutate(tweetid = row_number())
+
+data_joined %>% glimpse() 
+```
+We now have unique **tweetids** in the joined dataframe. Let's check if some of the **messages** occur more than once.
+```{r}
+data_joined %>% group_by(message) %>% count(sort=TRUE)
+```
+It seems like we have quite a few duplicated tweets when joining the two datasets. We want each tweet text to appear only once and therefore we filter out duplicates again. 
+```{r}
+data_joined %<>% distinct(message, .keep_all = TRUE)
+```
+
+Now we have a dataset with unique tweets. Let's dive into it. 
+
+The **sentiment** variable takes a value between -1 and 2, where
+
+* 2 represents news, i.e., the tweet links to factual news about climate change
+
+* 1 indicates a pro tweet, thus the content supports the belief of manmade climate change
+
+* 0 is a neutral tweet and thus neither supports nor refutes the belief of man-made climate change
+
+* -1 corresponds to a an anti tweet and does not believe in man-made climate change
+
+Let's see how the tweets are distributed across these classes.
+```{r}
+data_joined %>% group_by(sentiment) %>% summarise(n=n()) %>% mutate(share = percent(n/sum(n)))
+```
+
+Since we can't know for sure whether users who link to factual news about climate change are pro or anti we'll add this class to the **neutral** tweets. 
+```{r}
+data_joined %<>% mutate(sentiment = ifelse(sentiment == 2,0,sentiment))
+data_joined %>% group_by(sentiment) %>% summarise(n=n()) %>% mutate(share = percent(n/sum(n)))
+```
+We see that the tweets belonging to the **neutral** class now make up the largest fraction of the dataset whilst the **pro** tweets make up approximately 40%. Thus, considering the **anti** tweets we have a clear overrepresentation of **neutral** and **pro** tweets since the tweets belonging to the **anti** class only make up approximately 13% of the dataset.
+
+Exporting the joined dataset as a csv file.
+```{r}
+#write_csv(data_joined,"/Users/NikolineSofie/Data/M4_data/data_joined.csv")
+```
+
+Now let's take a quick look at the contents of the tweets. We'll first break the tweets down into words. 
+```{r}
+data_token <- data_joined %>% unnest_tokens(word,message,token = "tweets")
+```
+Then we'll filter out stopwords and words shorter than three characters. Also we remove the "amp" words since this is Twitter-specific-lingo for an "&" character.
+```{r}
+data_token_tidy <- data_token %>%
+  anti_join(stop_words) %>%
+  filter(!(word %>% str_detect("amp"))) %>%
+  filter(str_length(word)>2)
+```
+Now let's see what the top twenty most frequently occuring words are across all tweets.
+```{r}
+data_token_tidy %>% 
+  group_by(word) %>% 
+  count(sort = TRUE) %>% 
+  head(20)
+```
+
+Let's visualize.
+```{r}
+data_token_tidy %>%
+  count(word,sort=TRUE) %>% 
+  slice(1:20) %>% #chooses the words 1:20
+  ggplot(aes(x = fct_reorder(word, n), y = n, fill = word)) +
+  geom_col(show.legend = FALSE) +
+  coord_flip() +
+  labs(title = "Top 20 most frequently used words", x = NULL)
+```
+
+Hash tags are a also big part of the communication on Twitter. Let's taker a closer look at what climate change related hash tags are most frequently used.
+```{r}
+data_hashtags <- data_token %>% filter(word %>% str_detect("^#"))
+
+data_hashtags %>% group_by(word) %>% count(sort = TRUE) %>% head(20)
+```
+Once again, let's visualize.
+```{r}
+data_hashtags %>%
+  count(word,sort=TRUE) %>% 
+  slice(1:20) %>% #chooses the words 1:20
+  ggplot(aes(x = fct_reorder(word, n), y = n, fill = word)) +
+  geom_col(show.legend = FALSE) +
+  coord_flip() +
+  labs(title = "Top 20 most frequently used hashtags", x = NULL)
+```
+
+
+
+
